@@ -4,4 +4,18 @@ version = "0.1.0"
 description = "BIBFRAME Interoperability Group code for transforming DCTap tsv files into SHACL"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "rdflib>=7.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "ruff>=0.14.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    "src"
+]
+addopts = "-v"
