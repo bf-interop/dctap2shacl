@@ -2,7 +2,7 @@ import pytest
 
 import rdflib
 
-from dctap2shacl import DCTap2SHACLTransformer, BF, SHACL
+from dctap2shacl import DCTap2SHACLTransformer, BF
 
 
 @pytest.fixture
@@ -29,32 +29,34 @@ def test_add_property(bf_instance_print_row):
         transformer.graph.value(
             subject=big_monograph_instance, predicate=rdflib.RDF.type
         )
-        == SHACL.NodeShape
+        == rdflib.SH.NodeShape
     )
     assert transformer.graph.value(
         subject=big_monograph_instance, predicate=rdflib.RDFS.label
     ) == rdflib.Literal("Instance (Monograph) Print")
     property_instanceOf = transformer.graph.value(
-        subject=big_monograph_instance, predicate=SHACL.property
+        subject=big_monograph_instance, predicate=rdflib.SH.property
     )
     assert (
         transformer.graph.value(subject=property_instanceOf, predicate=rdflib.RDF.type)
-        == SHACL.PropertyShape
+        == rdflib.SH.PropertyShape
     )
     assert transformer.graph.value(
         subject=property_instanceOf, predicate=rdflib.RDFS.label
     ) == rdflib.Literal("Instance of")
     assert transformer.graph.value(
-        subject=property_instanceOf, predicate=SHACL.node
+        subject=property_instanceOf, predicate=rdflib.SH.node
     ) == rdflib.URIRef("big:Monograph:Work")
     assert transformer.graph.value(
-        subject=property_instanceOf, predicate=SHACL.minCount
+        subject=property_instanceOf, predicate=rdflib.SH.minCount
     ) == rdflib.Literal(1)
     assert (
-        transformer.graph.value(subject=property_instanceOf, predicate=SHACL.path)
+        transformer.graph.value(subject=property_instanceOf, predicate=rdflib.SH.path)
         == BF.instanceOf
     )
     assert (
-        transformer.graph.value(subject=property_instanceOf, predicate=SHACL.serverity)
-        == SHACL.Violation
+        transformer.graph.value(
+            subject=property_instanceOf, predicate=rdflib.SH.severity
+        )
+        == rdflib.SH.Violation
     )

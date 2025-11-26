@@ -8,14 +8,12 @@ from typing import Union
 
 BF = rdflib.Namespace("http://id.loc.gov/ontologies/bibframe/")
 BFLC = rdflib.Namespace("http://id.loc.gov/ontologies/bflc/")
-SHACL = rdflib.Namespace("http://www.w3.org/ns/shacl#")
 
 
 def init_shacl() -> rdflib.Graph:
     graph = rdflib.Graph()
     graph.namespace_manager.bind("bf", BF)
     graph.namespace_manager.bind("bflc", BFLC)
-    graph.namespace_manager.bind("sh", SHACL)
     return graph
 
 
@@ -52,19 +50,21 @@ class DCTap2SHACLTransformer:
     graph: rdflib.Graph = field(default_factory=init_shacl)
 
     def sh_datatype(self, datatype: str, property_bnode: rdflib.BNode):
-        """Adds a SHACL datatype to a property shape"""
+        """Adds a rdflib.SH datatype to a property shape"""
         match datatype:
             case "rdf:langString":
-                self.graph.add((property_bnode, SHACL.datatype, rdflib.RDF.langString))
+                self.graph.add(
+                    (property_bnode, rdflib.SH.datatype, rdflib.RDF.langString)
+                )
 
             case "xsd:string":
-                self.graph.add((property_bnode, SHACL.datatype, rdflib.XSD.string))
+                self.graph.add((property_bnode, rdflib.SH.datatype, rdflib.XSD.string))
 
     def sh_property_shape(self, shape_id: rdflib.Node, label: str) -> rdflib.BNode:
-        """Adds SHACL Property Shape"""
+        """Adds rdflib.SH Property Shape"""
         property_bnode = rdflib.BNode()
-        self.graph.add((shape_id, SHACL.property, property_bnode))
-        self.graph.add((property_bnode, rdflib.RDF.type, SHACL.PropertyShape))
+        self.graph.add((shape_id, rdflib.SH.property, property_bnode))
+        self.graph.add((property_bnode, rdflib.RDF.type, rdflib.SH.PropertyShape))
         self.graph.add((property_bnode, rdflib.RDFS.label, rdflib.Literal(label)))
         return property_bnode
 
@@ -73,15 +73,15 @@ class DCTap2SHACLTransformer:
         if severity:
             match severity.strip().casefold():
                 case "violation":
-                    severity_level = SHACL.Violation
+                    severity_level = rdflib.SH.Violation
 
                 case "warning":
-                    severity_level = SHACL.Warning
+                    severity_level = rdflib.SH.Warning
 
                 case _:
-                    severity_level = SHACL.Info
+                    severity_level = rdflib.SH.Info
 
-            self.graph.add((property_bnode, SHACL.serverity, severity_level))
+            self.graph.add((property_bnode, rdflib.SH.severity, severity_level))
 
     def sh_value_constaint(
         self,
@@ -96,19 +96,19 @@ class DCTap2SHACLTransformer:
                 pass
 
             case "pattern":
-                predicate = SHACL.pattern
+                predicate = rdflib.SH.pattern
 
             case "minLength":
-                predicate = SHACL.minLength
+                predicate = rdflib.SH.minLength
 
             case "maxLength":
-                predicate = SHACL.maxLength
+                predicate = rdflib.SH.maxLength
 
             case "minInclusive":
-                predicate = SHACL.minInclusive
+                predicate = rdflib.SH.minInclusive
 
             case "maxInclusive":
-                predicate = SHACL.maxInclusive
+                predicate = rdflib.SH.maxInclusive
 
         if predicate:
             self.graph.add(
@@ -116,26 +116,26 @@ class DCTap2SHACLTransformer:
             )
 
     def add_property(self, row: dict):
-        """Adds a SHACL Node Property to the shape graph"""
+        """Adds a rdflib.SH Node Property to the shape graph"""
         shape_id = rdflib.URIRef(row["shapeID"])
         node_shape = self.graph.value(subject=shape_id, predicate=rdflib.RDF.type)
         if (
             node_shape is None
-        ):  # SHACL Node Shape not in graph, adds shape_id as a SHACL graph
-            self.graph.add((shape_id, rdflib.RDF.type, SHACL.NodeShape))
+        ):  # rdflib.SH Node Shape not in graph, adds shape_id as a rdflib.SH graph
+            self.graph.add((shape_id, rdflib.RDF.type, rdflib.SH.NodeShape))
             self.graph.add(
                 (shape_id, rdflib.RDFS.label, rdflib.Literal(row["shapeLabel"]))
             )
         property_bnode = self.sh_property_shape(shape_id, row["propertyLabel"])
         path_object = prop_id_to_rdf_node(row["propertyID"])
-        self.graph.add((property_bnode, SHACL.path, path_object))
+        self.graph.add((property_bnode, rdflib.SH.path, path_object))
         self.sh_severity(property_bnode, row.get("severity"))
         if row["mandatory"].startswith("true"):
-            self.graph.add((property_bnode, SHACL.minCount, rdflib.Literal(1)))
+            self.graph.add((property_bnode, rdflib.SH.minCount, rdflib.Literal(1)))
         if row["repeatable"].startswith("false"):
-            self.graph.add((property_bnode, SHACL.maxCount, rdflib.Literal(1)))
+            self.graph.add((property_bnode, rdflib.SH.maxCount, rdflib.Literal(1)))
         value_shape = row.get("valueShape")
         if isinstance(value_shape, str) and len(value_shape.strip()) > 0:
-            self.graph.add((property_bnode, SHACL.node, rdflib.URIRef(value_shape)))
+            self.graph.add((property_bnode, rdflib.SH.node, rdflib.URIRef(value_shape)))
         if "valueDataType" in row:
             self.sh_datatype(row["valueDataType"], property_bnode)
