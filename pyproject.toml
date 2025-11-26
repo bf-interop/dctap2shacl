@@ -9,13 +9,16 @@ dependencies = [
 ]
 
 [project.scripts]
-transform = "cli"
+dctap2shacl = "cli:main"
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",
     "ruff>=0.14.6",
 ]
+
+[tool.uv]
+package = true
 
 [tool.pytest.ini_options]
 pythonpath = [
