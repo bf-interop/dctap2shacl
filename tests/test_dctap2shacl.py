@@ -60,3 +60,25 @@ def test_add_property(bf_instance_print_row):
         )
         == rdflib.SH.Violation
     )
+
+
+def test_run_dctap_csv():
+    transformer = DCTap2SHACLTransformer()
+    transformer.run("tests/admin_metadata.tsv")
+
+    assert len(transformer.graph) == 17
+    big_admin_metadata_shape = rdflib.URIRef("big:AdminMetadata")
+
+    assert (
+        transformer.graph.value(
+            subject=big_admin_metadata_shape, predicate=rdflib.SH.targetClass
+        )
+        == BF.AdminMetadata
+    )
+
+
+def test_run_missing_dctap_csv():
+    transformer = DCTap2SHACLTransformer()
+
+    with pytest.raises(ValueError, match="bf-print.tsv not found"):
+        transformer.run("bf-print.tsv")
