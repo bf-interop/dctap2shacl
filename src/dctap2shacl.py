@@ -1,4 +1,5 @@
 import csv
+import pathlib
 
 import rdflib
 
@@ -83,6 +84,16 @@ class DCTap2SHACLTransformer:
 
             self.graph.add((property_bnode, rdflib.SH.severity, severity_level))
 
+    def sh_targets(self, row: dict):
+        """Adds SHACL targets to graph"""
+        targets = [
+            prop_id_to_rdf_node(target.strip())
+            for target in row.get("target", "").split(";")
+        ]
+        shape_id = rdflib.URIRef(row["shapeID"])
+        for target in targets:
+            self.graph.add((shape_id, rdflib.SH.targetClass, target))
+
     def sh_value_constaint(
         self,
         value_constraint: str,
@@ -123,9 +134,10 @@ class DCTap2SHACLTransformer:
             node_shape is None
         ):  # rdflib.SH Node Shape not in graph, adds shape_id as a rdflib.SH graph
             self.graph.add((shape_id, rdflib.RDF.type, rdflib.SH.NodeShape))
-            self.graph.add(
-                (shape_id, rdflib.RDFS.label, rdflib.Literal(row["shapeLabel"]))
-            )
+            if len(row["shapeLabel"]) > 1:
+                self.graph.add(
+                    (shape_id, rdflib.RDFS.label, rdflib.Literal(row["shapeLabel"]))
+                )
         property_bnode = self.sh_property_shape(shape_id, row["propertyLabel"])
         path_object = prop_id_to_rdf_node(row["propertyID"])
         self.graph.add((property_bnode, rdflib.SH.path, path_object))
@@ -139,3 +151,26 @@ class DCTap2SHACLTransformer:
             self.graph.add((property_bnode, rdflib.SH.node, rdflib.URIRef(value_shape)))
         if "valueDataType" in row:
             self.sh_datatype(row["valueDataType"], property_bnode)
+
+    def generate_shacl(self, dctap_rows: list[dict]):
+        """
+        Takes a list of dictionaries from DCTap and creates SHACL validation graph
+        """
+        for row in dctap_rows:
+            if row.get("shapeID") is None:
+                continue
+            if row.get("target") != None:
+                self.sh_targets(row)
+            self.add_property(row)
+
+    def run(self, dctap_file: str):
+        """
+        Opens a dctap tsv file or textual string and transform to SHACL graph
+        """
+        dctap_path = pathlib.Path(dctap_file)
+        if not dctap_path.exists():
+            raise ValueError(f"{dctap_file} not found")
+        with dctap_path.open() as fo:
+            reader = csv.DictReader(fo, delimiter="\t")
+            dctap_rows = [row for row in reader]
+            self.generate_shacl(dctap_rows)
