@@ -92,17 +92,11 @@ class DCTap2SHACLTransformer:
         """Adds a value constraint type to a property shape"""
         predicate = None
         match value_constraint_type:
-            case "picklist":
-                pass
-
-            case "IRIstem":
+            case "picklist" | "IRIstem" | "languageTag":
                 pass
 
             case "pattern":
                 predicate = SHACL.pattern
-
-            case "languageTag":
-                pass
 
             case "minLength":
                 predicate = SHACL.minLength
