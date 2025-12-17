@@ -15,7 +15,7 @@ This will create and save a turtle file, `bf-validation.ttl` in the same directo
 - `-i`, `--dctap` One or more DCTap files, seperated by commas
 - `-o`, `--shacl` Optional, file name for the validation graph
 - `-fmt`, `--format` Optional, RDF serialization format, can be one of the following:
-  - `turtle`: Turtle
+  - `turtle`: Turtle (default)
   - `xml` or `pretty-xml`: XML
   - `json-ld`: JSON Linked Data format
   - `nt`: N-triples
