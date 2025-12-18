@@ -14,7 +14,7 @@ wheels = [
 [[package]]
 name = "dctap2shacl"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "rdflib" },
 ]
