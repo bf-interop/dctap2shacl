@@ -159,7 +159,7 @@ class DCTap2SHACLTransformer:
         for row in dctap_rows:
             if row.get("shapeID") is None:
                 continue
-            if row.get("target") != None:
+            if row.get("target") is not None:
                 self.sh_targets(row)
             self.add_property(row)
 
