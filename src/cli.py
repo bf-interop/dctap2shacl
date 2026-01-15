@@ -7,12 +7,20 @@ def main():
     parser = argparse.ArgumentParser(
         description="Tranform DCTap TSV files to SHACL BIBFRAME validation graph."
     )
-    parser.add_argument("-i", "--dctap", help="One or more DCTap files, seperated by commas")
     parser.add_argument(
-        "-o", "--shacl", default="bf-validation.ttl", help="Output SHACL validation file"
+        "-i", "--dctap", help="One or more DCTap files, seperated by commas"
     )
     parser.add_argument(
-        "-fmt", "--format", default="turtle", help="Serialization format for SHAC, default is turtle"
+        "-o",
+        "--shacl",
+        default="bf-validation.ttl",
+        help="Output SHACL validation file",
+    )
+    parser.add_argument(
+        "-fmt",
+        "--format",
+        default="turtle",
+        help="Serialization format for SHAC, default is turtle",
     )
 
     args = parser.parse_args()
