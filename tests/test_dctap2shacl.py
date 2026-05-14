@@ -62,6 +62,46 @@ def test_add_property(bf_instance_print_row):
     )
 
 
+def test_shacl_or_property_id():
+    role_row = {
+        "shapeID": "big:Role",
+        "shapeLabel": "Role",
+        "target": "bf:Role",
+        "propertyID": "rdfs:label ; bf:code",
+        "propertyLabel": "Role Label",
+        "valueShape": "big:AdminMetadata",
+        "mandatory": "true",
+        "severity": "Warning",
+        "valueNodeType": "literal",
+        "repeatable": "true",
+    }
+    transformer = DCTap2SHACLTransformer()
+    transformer.add_property(role_row)
+
+    assert len(transformer.graph) == 15
+    shape_node = rdflib.URIRef("big:Role")
+    or_blank_node = transformer.graph.value(
+        subject=shape_node, predicate=getattr(rdflib.SH, "or")
+    )
+    or_collection = rdflib.collection.Collection(transformer.graph, or_blank_node)
+    assert len(or_collection) == 2
+    assert (
+        transformer.graph.value(subject=or_collection[0], predicate=rdflib.SH.path)
+        == rdflib.RDFS.label
+    )
+    assert transformer.graph.value(
+        subject=or_collection[0], predicate=rdflib.SH.minCount
+    ) == rdflib.Literal(1)
+    assert (
+        transformer.graph.value(subject=or_collection[1], predicate=rdflib.SH.path)
+        == BF.code
+    )
+    assert (
+        transformer.graph.value(subject=or_collection[1], predicate=rdflib.SH.maxCount)
+        is None
+    )
+
+
 def test_run_dctap_csv():
     transformer = DCTap2SHACLTransformer()
     transformer.run("tests/admin_metadata.tsv")

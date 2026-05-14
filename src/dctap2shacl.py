@@ -50,6 +50,18 @@ class DCTap2SHACLTransformer:
     dctap: list[dict] = field(default_factory=list)
     graph: rdflib.Graph = field(default_factory=init_shacl)
 
+    def set_mandatory(self, bnode: rdflib.BNode, mandatory: str):
+        if mandatory.startswith("true"):
+            self.graph.add((bnode, rdflib.SH.minCount, rdflib.Literal(1)))
+
+    def set_repeatable(self, bnode: rdflib.BNode, repeatable: str):
+        if repeatable.startswith("false"):
+            self.graph.add((bnode, rdflib.SH.maxCount, rdflib.Literal(1)))
+
+    def set_value_shape(self, bnode: rdflib.BNode, value_shape: Union[str, None]):
+        if isinstance(value_shape, str) and len(value_shape.strip()) > 0:
+            self.graph.add((bnode, rdflib.SH.node, rdflib.URIRef(value_shape)))
+
     def sh_datatype(self, datatype: str, property_bnode: rdflib.BNode):
         """Adds a rdflib.SH datatype to a property shape"""
         match datatype:
@@ -60,6 +72,29 @@ class DCTap2SHACLTransformer:
 
             case "xsd:string":
                 self.graph.add((property_bnode, rdflib.SH.datatype, rdflib.XSD.string))
+
+    def sh_or_properites(self, shape_id: rdflib.URIRef, row: dict):
+        """
+        Adds a SHACL OR using RDF list for a list of properites
+        """
+        properties = [
+            prop_id_to_rdf_node(prop.strip()) for prop in row["propertyID"].split(";")
+        ]
+        or_blank_node = rdflib.BNode()
+        self.graph.add((shape_id, getattr(rdflib.SH, "or"), or_blank_node))
+        items = []
+        for path_object in properties:
+            prop_bnode = rdflib.BNode()
+            self.graph.add((prop_bnode, rdflib.SH.path, path_object))
+            self.sh_severity(prop_bnode, row.get("severity"))
+            self.set_mandatory(prop_bnode, row["mandatory"])
+            self.set_repeatable(prop_bnode, row["repeatable"])
+            self.set_value_shape(prop_bnode, row.get("valueShape"))
+
+            if "valueDataType" in row:
+                self.sh_datatype(row["valueDataType"], prop_bnode)
+            items.append(prop_bnode)
+        rdflib.collection.Collection(self.graph, or_blank_node, items)
 
     def sh_property_shape(self, shape_id: rdflib.Node, label: str) -> rdflib.BNode:
         """Adds rdflib.SH Property Shape"""
@@ -138,17 +173,19 @@ class DCTap2SHACLTransformer:
                 self.graph.add(
                     (shape_id, rdflib.RDFS.label, rdflib.Literal(row["shapeLabel"]))
                 )
+
+        if ";" in row["propertyID"]:
+            self.sh_or_properites(shape_id, row)
+            return
+
         property_bnode = self.sh_property_shape(shape_id, row["propertyLabel"])
         path_object = prop_id_to_rdf_node(row["propertyID"])
         self.graph.add((property_bnode, rdflib.SH.path, path_object))
         self.sh_severity(property_bnode, row.get("severity"))
-        if row["mandatory"].startswith("true"):
-            self.graph.add((property_bnode, rdflib.SH.minCount, rdflib.Literal(1)))
-        if row["repeatable"].startswith("false"):
-            self.graph.add((property_bnode, rdflib.SH.maxCount, rdflib.Literal(1)))
-        value_shape = row.get("valueShape")
-        if isinstance(value_shape, str) and len(value_shape.strip()) > 0:
-            self.graph.add((property_bnode, rdflib.SH.node, rdflib.URIRef(value_shape)))
+        self.set_mandatory(property_bnode, row["mandatory"])
+        self.set_repeatable(property_bnode, row["repeatable"])
+        self.set_value_shape(property_bnode, row.get("valueShape"))
+
         if "valueDataType" in row:
             self.sh_datatype(row["valueDataType"], property_bnode)
 
