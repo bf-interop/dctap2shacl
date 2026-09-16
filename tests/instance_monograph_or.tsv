@@ -1,0 +1,8 @@
+shapeID	shapeLabel	target	propertyID	propertyLabel	valueShape	mandatory	severity	valueNodeType	repeatable	sh:or	note
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:mainTitle	Main Title		true	Warning	literal	true		
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bflc:simpleAgent	Agent Simple Label		true	Warning	literal	true	bf:agent	
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:agent	Agent	big:Agent	true	Warning	IRI ; bnode	true	bflc:simpleAgent	
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:date 	Date		true	Warning	literal	true	bflc:simpleDate	Pull both types of dates if they exist as the formatting may differ
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:note	Note		true	Warning	literal	true		
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bflc:simpleDate	Simple Date		true	Warning	literal	true	bf:date	
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:place	Place	big:Place	true	Warning	IRI ; bnode	true	bflc:simplePlace	

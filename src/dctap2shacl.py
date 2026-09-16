@@ -10,6 +10,25 @@ from typing import Union
 BF = rdflib.Namespace("http://id.loc.gov/ontologies/bibframe/")
 BFLC = rdflib.Namespace("http://id.loc.gov/ontologies/bflc/")
 
+# dctap column naming the alternatives of a property that expects a different
+# valueNodeType, see https://github.com/bf-interop/dctap2shacl/issues/7
+OR_COLUMNS = ("sh:or", "sh_or")
+
+NODE_TYPE_ALIASES = {
+    "blank node": "bnode",
+    "blanknode": "bnode",
+    "uri": "iri",
+}
+
+NODE_KINDS = {
+    frozenset({"literal"}): rdflib.SH.Literal,
+    frozenset({"iri"}): rdflib.SH.IRI,
+    frozenset({"bnode"}): rdflib.SH.BlankNode,
+    frozenset({"bnode", "iri"}): rdflib.SH.BlankNodeOrIRI,
+    frozenset({"iri", "literal"}): rdflib.SH.IRIOrLiteral,
+    frozenset({"bnode", "literal"}): rdflib.SH.BlankNodeOrLiteral,
+}
+
 
 def init_shacl() -> rdflib.Graph:
     graph = rdflib.Graph()
@@ -20,7 +39,7 @@ def init_shacl() -> rdflib.Graph:
 
 def prop_id_to_rdf_node(property_id):
     if ":" in property_id:
-        namespace, suffix = property_id.split(":")
+        namespace, suffix = property_id.split(":", 1)
         namespace = namespace.strip()
         suffix = suffix.strip()
         match namespace:
@@ -36,6 +55,9 @@ def prop_id_to_rdf_node(property_id):
             case "rdfs":
                 path_object = getattr(rdflib.RDFS, suffix)
 
+            case _:
+                path_object = rdflib.URIRef(property_id)
+
     elif property_id.startswith("http"):
         path_object = rdflib.URIRef(property_id)
 
@@ -45,17 +67,97 @@ def prop_id_to_rdf_node(property_id):
     return path_object
 
 
+def split_column(value: Union[str, None]) -> list[str]:
+    """Splits a semi-colon delimited dctap cell into its trimmed values"""
+    if not value:
+        return []
+    return [entry.strip() for entry in value.split(";") if entry.strip()]
+
+
+def property_ids(row: dict) -> list[str]:
+    """Returns the one-or-more propertyIDs in a dctap row"""
+    return split_column(row.get("propertyID"))
+
+
+def or_alternatives(row: dict) -> list[str]:
+    """Returns the alternative propertyIDs from a dctap row's sh:or column"""
+    for column in OR_COLUMNS:
+        alternatives = split_column(row.get(column))
+        if alternatives:
+            return alternatives
+    return []
+
+
+def group_or_rows(dctap_rows: list[dict]) -> tuple[dict, dict]:
+    """
+    Groups dctap rows that name each other in the sh:or column.
+
+    Alternatives are usually declared reciprocally, each row naming the other,
+    and the paired rows are not always adjacent. Grouping therefore happens
+    before any row is added to the graph so that a pair collapses into a single
+    SHACL or instead of one per row.
+
+    Returns the groups keyed by a (shapeID, propertyID) root, each holding the
+    shape and an ordered mapping of propertyID to the row it came from, along
+    with a mapping of row position to the group that row belongs to.
+    """
+    parents: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def find(key):
+        parents.setdefault(key, key)
+        while parents[key] != key:
+            parents[key] = parents[parents[key]]
+            key = parents[key]
+        return key
+
+    def union(left, right):
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for row in dctap_rows:
+        alternatives = or_alternatives(row)
+        own_properties = property_ids(row)
+        if not alternatives or not own_properties:
+            continue
+        shape_id = row.get("shapeID") or ""
+        keys = [(shape_id, prop) for prop in own_properties + alternatives]
+        for key in keys[1:]:
+            union(keys[0], key)
+
+    groups: dict = {}
+    row_groups: dict[int, tuple[str, str]] = {}
+    for position, row in enumerate(dctap_rows):
+        shape_id = row.get("shapeID") or ""
+        own_properties = property_ids(row)
+        group_key = None
+        for prop in own_properties:
+            if (shape_id, prop) in parents:
+                group_key = find((shape_id, prop))
+                break
+        if group_key is None:
+            continue
+        group = groups.setdefault(group_key, {"shape_id": shape_id, "branches": {}})
+        for prop in own_properties:
+            group["branches"][prop] = row
+        for prop in or_alternatives(row):
+            group["branches"].setdefault(prop, None)
+        row_groups[position] = group_key
+
+    return groups, row_groups
+
+
 @dataclass
 class DCTap2SHACLTransformer:
     dctap: list[dict] = field(default_factory=list)
     graph: rdflib.Graph = field(default_factory=init_shacl)
 
-    def set_mandatory(self, bnode: rdflib.BNode, mandatory: str):
-        if mandatory.startswith("true"):
+    def set_mandatory(self, bnode: rdflib.BNode, mandatory: Union[str, None]):
+        if mandatory and mandatory.strip().casefold().startswith("true"):
             self.graph.add((bnode, rdflib.SH.minCount, rdflib.Literal(1)))
 
-    def set_repeatable(self, bnode: rdflib.BNode, repeatable: str):
-        if repeatable.startswith("false"):
+    def set_repeatable(self, bnode: rdflib.BNode, repeatable: Union[str, None]):
+        if repeatable and repeatable.strip().casefold().startswith("false"):
             self.graph.add((bnode, rdflib.SH.maxCount, rdflib.Literal(1)))
 
     def set_value_shape(self, bnode: rdflib.BNode, value_shape: Union[str, None]):
@@ -73,27 +175,66 @@ class DCTap2SHACLTransformer:
             case "xsd:string":
                 self.graph.add((property_bnode, rdflib.SH.datatype, rdflib.XSD.string))
 
+    def sh_node_kind(
+        self, property_bnode: rdflib.BNode, value_node_type: Union[str, None]
+    ):
+        """Adds a SHACL nodeKind to a property shape from a dctap valueNodeType"""
+        node_types = {entry.casefold() for entry in split_column(value_node_type)}
+        node_types = {NODE_TYPE_ALIASES.get(entry, entry) for entry in node_types}
+        node_kind = NODE_KINDS.get(frozenset(node_types))
+        if node_kind:
+            self.graph.add((property_bnode, rdflib.SH.nodeKind, node_kind))
+
+    def apply_row_constraints(self, property_bnode: rdflib.BNode, row: dict):
+        """Adds all of a dctap row's constraints to a property shape"""
+        self.sh_severity(property_bnode, row.get("severity"))
+        self.set_mandatory(property_bnode, row.get("mandatory"))
+        self.set_repeatable(property_bnode, row.get("repeatable"))
+        self.set_value_shape(property_bnode, row.get("valueShape"))
+        self.sh_node_kind(property_bnode, row.get("valueNodeType"))
+
+        if "valueDataType" in row:
+            self.sh_datatype(row["valueDataType"], property_bnode)
+
     def sh_or_properites(self, shape_id: rdflib.URIRef, row: dict):
         """
         Adds a SHACL OR using RDF list for a list of properites
         """
-        properties = [
-            prop_id_to_rdf_node(prop.strip()) for prop in row["propertyID"].split(";")
-        ]
+        properties = [prop_id_to_rdf_node(prop) for prop in property_ids(row)]
         or_blank_node = rdflib.BNode()
         self.graph.add((shape_id, getattr(rdflib.SH, "or"), or_blank_node))
         items = []
         for path_object in properties:
             prop_bnode = rdflib.BNode()
             self.graph.add((prop_bnode, rdflib.SH.path, path_object))
-            self.sh_severity(prop_bnode, row.get("severity"))
-            self.set_mandatory(prop_bnode, row["mandatory"])
-            self.set_repeatable(prop_bnode, row["repeatable"])
-            self.set_value_shape(prop_bnode, row.get("valueShape"))
-
-            if "valueDataType" in row:
-                self.sh_datatype(row["valueDataType"], prop_bnode)
+            self.apply_row_constraints(prop_bnode, row)
             items.append(prop_bnode)
+        rdflib.collection.Collection(self.graph, or_blank_node, items)
+
+    def sh_or_alternatives(self, shape_id: rdflib.URIRef, branches: dict):
+        """
+        Adds a SHACL OR using an RDF list for properties declared as
+        alternatives of each other in the dctap sh:or column. Each branch keeps
+        the constraints of the row it came from, which is what distinguishes
+        this from sh_or_properites where every branch shares one row.
+        """
+        or_blank_node = rdflib.BNode()
+        self.graph.add((shape_id, getattr(rdflib.SH, "or"), or_blank_node))
+        items = []
+        for property_id, row in branches.items():
+            prop_bnode = rdflib.BNode()
+            self.graph.add(
+                (prop_bnode, rdflib.SH.path, prop_id_to_rdf_node(property_id))
+            )
+            items.append(prop_bnode)
+            if row is None:
+                # An alternative without a dctap row of its own, its intended
+                # constraints are unknown so only the path is added
+                continue
+            label = (row.get("propertyLabel") or "").strip()
+            if label:
+                self.graph.add((prop_bnode, rdflib.RDFS.label, rdflib.Literal(label)))
+            self.apply_row_constraints(prop_bnode, row)
         rdflib.collection.Collection(self.graph, or_blank_node, items)
 
     def sh_property_shape(self, shape_id: rdflib.Node, label: str) -> rdflib.BNode:
@@ -122,8 +263,7 @@ class DCTap2SHACLTransformer:
     def sh_targets(self, row: dict):
         """Adds SHACL targets to graph"""
         targets = [
-            prop_id_to_rdf_node(target.strip())
-            for target in row.get("target", "").split(";")
+            prop_id_to_rdf_node(target) for target in split_column(row.get("target"))
         ]
         shape_id = rdflib.URIRef(row["shapeID"])
         for target in targets:
@@ -161,8 +301,8 @@ class DCTap2SHACLTransformer:
                 (property_bnode, predicate, rdflib.Literal(value_constraint))
             )
 
-    def add_property(self, row: dict):
-        """Adds a rdflib.SH Node Property to the shape graph"""
+    def add_node_shape(self, row: dict) -> rdflib.URIRef:
+        """Adds the row's shapeID as a rdflib.SH Node Shape if not already present"""
         shape_id = rdflib.URIRef(row["shapeID"])
         node_shape = self.graph.value(subject=shape_id, predicate=rdflib.RDF.type)
         if (
@@ -173,32 +313,43 @@ class DCTap2SHACLTransformer:
                 self.graph.add(
                     (shape_id, rdflib.RDFS.label, rdflib.Literal(row["shapeLabel"]))
                 )
+        return shape_id
+
+    def add_property(self, row: dict):
+        """Adds a rdflib.SH Node Property to the shape graph"""
+        shape_id = self.add_node_shape(row)
 
         if ";" in row["propertyID"]:
             self.sh_or_properites(shape_id, row)
             return
 
         property_bnode = self.sh_property_shape(shape_id, row["propertyLabel"])
-        path_object = prop_id_to_rdf_node(row["propertyID"])
+        path_object = prop_id_to_rdf_node(row["propertyID"].strip())
         self.graph.add((property_bnode, rdflib.SH.path, path_object))
-        self.sh_severity(property_bnode, row.get("severity"))
-        self.set_mandatory(property_bnode, row["mandatory"])
-        self.set_repeatable(property_bnode, row["repeatable"])
-        self.set_value_shape(property_bnode, row.get("valueShape"))
-
-        if "valueDataType" in row:
-            self.sh_datatype(row["valueDataType"], property_bnode)
+        self.apply_row_constraints(property_bnode, row)
 
     def generate_shacl(self, dctap_rows: list[dict]):
         """
         Takes a list of dictionaries from DCTap and creates SHACL validation graph
         """
-        for row in dctap_rows:
+        or_groups, row_groups = group_or_rows(dctap_rows)
+        emitted = set()
+        for position, row in enumerate(dctap_rows):
             if row.get("shapeID") is None:
                 continue
             if row.get("target") is not None:
                 self.sh_targets(row)
-            self.add_property(row)
+
+            group_key = row_groups.get(position)
+            if group_key is None:
+                self.add_property(row)
+                continue
+            if group_key in emitted:  # An earlier row already added this SHACL or
+                continue
+            self.add_node_shape(row)
+            group = or_groups[group_key]
+            self.sh_or_alternatives(rdflib.URIRef(group["shape_id"]), group["branches"])
+            emitted.add(group_key)
 
     def run(self, dctap_file: str):
         """
