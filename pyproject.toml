@@ -13,6 +13,7 @@ dctap2shacl = "cli:main"
 
 [dependency-groups]
 dev = [
+    "pyshacl>=0.30",
     "pytest>=9.0.1",
     "ruff>=0.14.6",
 ]

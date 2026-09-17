@@ -6,3 +6,4 @@ big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	b
 big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:note	Note		true	Warning	literal	true		
 big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bflc:simpleDate	Simple Date		true	Warning	literal	true	bf:date	
 big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bf:place	Place	big:Place	true	Warning	IRI ; bnode	true	bflc:simplePlace	
+big:ProvisionActivity	Provision Activity	bf:ProvisionActivity ; bf:Publication	bflc:simplePlace	Simple Place		true	Warning	literal	true	bf:place	

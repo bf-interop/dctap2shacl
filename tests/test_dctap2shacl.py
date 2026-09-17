@@ -1,17 +1,16 @@
+import pyshacl
 import pytest
 
 import rdflib
 
-from dctap2shacl import DCTap2SHACLTransformer, BF, BFLC
+from dctap2shacl import DCTap2SHACLTransformer, or_shape_id, BF, BFLC
 
 
-def or_branches(graph: rdflib.Graph, shape_id: str) -> list:
-    """Returns the property shapes in a shape's single SHACL or list"""
-    shape_node = rdflib.URIRef(shape_id)
-    or_nodes = list(
-        graph.objects(subject=shape_node, predicate=getattr(rdflib.SH, "or"))
-    )
-    assert len(or_nodes) == 1, f"expected one sh:or on {shape_id}, got {len(or_nodes)}"
+def or_branches(graph: rdflib.Graph, shape_id: str, root_property: str) -> list:
+    """Returns the property shapes in one or group's SHACL or list"""
+    or_shape = or_shape_id(shape_id, root_property)
+    or_nodes = list(graph.objects(subject=or_shape, predicate=getattr(rdflib.SH, "or")))
+    assert len(or_nodes) == 1, f"expected one sh:or on {or_shape}, got {len(or_nodes)}"
     return list(rdflib.collection.Collection(graph, or_nodes[0]))
 
 
@@ -124,10 +123,17 @@ def test_shacl_or_property_id():
     transformer = DCTap2SHACLTransformer()
     transformer.add_property(role_row)
 
-    assert len(transformer.graph) == 17
-    shape_node = rdflib.URIRef("big:Role")
+    or_shape = or_shape_id("big:Role", "rdfs:label")
+    assert (
+        transformer.graph.value(subject=or_shape, predicate=rdflib.SH.severity)
+        == rdflib.SH.Warning
+    )
+    assert (
+        transformer.graph.value(subject=or_shape, predicate=rdflib.SH.targetClass)
+        == BF.Role
+    )
     or_blank_node = transformer.graph.value(
-        subject=shape_node, predicate=getattr(rdflib.SH, "or")
+        subject=or_shape, predicate=getattr(rdflib.SH, "or")
     )
     or_collection = rdflib.collection.Collection(transformer.graph, or_blank_node)
     assert len(or_collection) == 2
@@ -178,8 +184,28 @@ def test_sh_or_column_reciprocal():
     transformer = DCTap2SHACLTransformer()
     transformer.generate_shacl(agent_or_rows())
 
-    branches = or_branches(transformer.graph, "big:ProvisionActivity")
+    branches = or_branches(
+        transformer.graph, "big:ProvisionActivity", "bflc:simpleAgent"
+    )
     assert len(branches) == 2
+
+    # The or group's severity belongs on the shape holding the sh:or; a branch
+    # severity is never reported and would make the branch count as conforming
+    # while validating with warnings allowed
+    or_shape = or_shape_id("big:ProvisionActivity", "bflc:simpleAgent")
+    assert (
+        transformer.graph.value(subject=or_shape, predicate=rdflib.SH.severity)
+        == rdflib.SH.Violation
+    )
+    for branch in branches:
+        assert (
+            transformer.graph.value(subject=branch, predicate=rdflib.SH.severity)
+            is None
+        )
+        assert (
+            transformer.graph.value(subject=branch, predicate=rdflib.RDF.type)
+            == rdflib.SH.PropertyShape
+        )
 
     # Neither alternative may be emitted as a standalone, independently
     # required, property shape
@@ -235,7 +261,9 @@ def test_sh_or_column_non_adjacent():
     transformer.generate_shacl([rows[0], unrelated, rows[1]])
 
     # The pair still collapses into one sh:or despite the row in between
-    branches = or_branches(transformer.graph, "big:ProvisionActivity")
+    branches = or_branches(
+        transformer.graph, "big:ProvisionActivity", "bflc:simpleAgent"
+    )
     assert len(branches) == 2
 
     # and the unrelated row keeps its own property shape
@@ -250,17 +278,12 @@ def test_sh_or_column_non_adjacent():
 def test_sh_or_column_one_sided():
     rows = agent_or_rows()
     transformer = DCTap2SHACLTransformer()
-    transformer.generate_shacl([rows[0]])
 
-    branches = or_branches(transformer.graph, "big:ProvisionActivity")
-    assert len(branches) == 2
-
-    # bf:agent has no dctap row of its own so only its path is known
-    dangling = branches[1]
-    assert (
-        transformer.graph.value(subject=dangling, predicate=rdflib.SH.path) == BF.agent
-    )
-    assert len(list(transformer.graph.predicate_objects(subject=dangling))) == 1
+    # bf:agent has no dctap row of its own, so its constraints are unknown. A
+    # branch without constraints always conforms, which would make the whole or
+    # group unable to ever fail, so the incomplete dctap is rejected instead.
+    with pytest.raises(ValueError, match="bf:agent"):
+        transformer.generate_shacl([rows[0]])
 
 
 def test_run_dctap_or_column():
@@ -268,17 +291,22 @@ def test_run_dctap_or_column():
     transformer.run("tests/instance_monograph_or.tsv")
 
     shape_node = rdflib.URIRef("big:ProvisionActivity")
-    or_nodes = list(
-        transformer.graph.objects(
-            subject=shape_node, predicate=getattr(rdflib.SH, "or")
-        )
-    )
-    # One sh:or each for the agent, date and place alternatives
-    assert len(or_nodes) == 3
 
+    # One sh:or each for the agent, date and place alternatives, every one on a
+    # shape of its own so it reports as its own Warning
     paths = set()
-    for or_node in or_nodes:
-        for branch in rdflib.collection.Collection(transformer.graph, or_node):
+    for root_property in ("bflc:simpleAgent", "bf:date", "bf:place"):
+        or_shape = or_shape_id("big:ProvisionActivity", root_property)
+        assert (
+            transformer.graph.value(subject=or_shape, predicate=rdflib.SH.severity)
+            == rdflib.SH.Warning
+        )
+        assert set(
+            transformer.graph.objects(subject=or_shape, predicate=rdflib.SH.targetClass)
+        ) == {BF.ProvisionActivity, BF.Publication}
+        for branch in or_branches(
+            transformer.graph, "big:ProvisionActivity", root_property
+        ):
             paths.add(transformer.graph.value(subject=branch, predicate=rdflib.SH.path))
     assert paths == {
         BFLC.simpleAgent,
@@ -324,3 +352,49 @@ def test_run_missing_dctap_csv():
 
     with pytest.raises(ValueError, match="bf-print.tsv not found"):
         transformer.run("bf-print.tsv")
+
+
+def test_sh_or_column_warns_on_missing_alternatives():
+    """
+    A group whose alternatives are all absent has to report a Warning.
+
+    Putting the dctap severity on the branches instead of on the shape holding
+    the sh:or made every group silent here, because pyshacl counts a branch
+    that fails only at sh:Warning as conforming when warnings are allowed.
+    """
+    transformer = DCTap2SHACLTransformer()
+    transformer.run("tests/instance_monograph_or.tsv")
+
+    data_graph = rdflib.Graph().parse(
+        data="""@prefix bf: <http://id.loc.gov/ontologies/bibframe/> .
+        <https://bcld.info/works/334456> a bf:Work ;
+            bf:Publication [ a bf:ProvisionActivity ;
+                    bf:agent [ ] ] .
+        """,
+        format="turtle",
+    )
+    _, results_graph, _ = pyshacl.validate(
+        data_graph, shacl_graph=transformer.graph, allow_warnings=True
+    )
+
+    or_results = {
+        results_graph.value(subject=result, predicate=rdflib.SH.sourceShape)
+        for result in results_graph.subjects(
+            predicate=rdflib.SH.sourceConstraintComponent,
+            object=rdflib.SH.OrConstraintComponent,
+        )
+    }
+    # bf:date and bf:place have neither alternative present, bf:agent does
+    assert or_results == {
+        or_shape_id("big:ProvisionActivity", "bf:date"),
+        or_shape_id("big:ProvisionActivity", "bf:place"),
+    }
+
+    for or_result in results_graph.subjects(
+        predicate=rdflib.SH.sourceConstraintComponent,
+        object=rdflib.SH.OrConstraintComponent,
+    ):
+        assert (
+            results_graph.value(subject=or_result, predicate=rdflib.SH.resultSeverity)
+            == rdflib.SH.Warning
+        )
